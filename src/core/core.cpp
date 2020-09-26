@@ -178,7 +178,7 @@ struct System::Impl {
         arp_manager.ResetAll();
 
         telemetry_session = std::make_unique<Core::TelemetrySession>();
-        service_manager = std::make_shared<Service::SM::ServiceManager>();
+        service_manager = std::make_shared<Service::SM::ServiceManager>(kernel);
 
         Service::Init(service_manager, system);
         GDBStub::DeferStart();
@@ -188,7 +188,6 @@ struct System::Impl {
         if (!gpu_core) {
             return ResultStatus::ErrorVideoCore;
         }
-        gpu_core->Renderer().Rasterizer().SetupDirtyFlags();
 
         is_powered_on = true;
         exit_lock = false;
@@ -222,7 +221,7 @@ struct System::Impl {
         telemetry_session->AddInitialInfo(*app_loader);
         auto main_process =
             Kernel::Process::Create(system, "main", Kernel::Process::ProcessType::Userland);
-        const auto [load_result, load_parameters] = app_loader->Load(*main_process);
+        const auto [load_result, load_parameters] = app_loader->Load(*main_process, system);
         if (load_result != Loader::ResultStatus::Success) {
             LOG_CRITICAL(Core, "Failed to load ROM (Error {})!", static_cast<int>(load_result));
             Shutdown();
@@ -630,11 +629,11 @@ Loader::AppLoader& System::GetAppLoader() const {
     return *impl->app_loader;
 }
 
-void System::SetFilesystem(std::shared_ptr<FileSys::VfsFilesystem> vfs) {
+void System::SetFilesystem(FileSys::VirtualFilesystem vfs) {
     impl->virtual_filesystem = std::move(vfs);
 }
 
-std::shared_ptr<FileSys::VfsFilesystem> System::GetFilesystem() const {
+FileSys::VirtualFilesystem System::GetFilesystem() const {
     return impl->virtual_filesystem;
 }
 

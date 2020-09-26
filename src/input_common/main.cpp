@@ -12,6 +12,7 @@
 #include "input_common/main.h"
 #include "input_common/motion_emu.h"
 #include "input_common/touch_from_button.h"
+#include "input_common/udp/client.h"
 #include "input_common/udp/udp.h"
 #ifdef HAVE_SDL2
 #include "input_common/sdl/sdl.h"
@@ -21,7 +22,7 @@ namespace InputCommon {
 
 struct InputSubsystem::Impl {
     void Initialize() {
-        auto gcadapter = std::make_shared<GCAdapter::Adapter>();
+        gcadapter = std::make_shared<GCAdapter::Adapter>();
         gcbuttons = std::make_shared<GCButtonFactory>(gcadapter);
         Input::RegisterFactory<Input::ButtonDevice>("gcpad", gcbuttons);
         gcanalog = std::make_shared<GCAnalogFactory>(gcadapter);
@@ -40,7 +41,11 @@ struct InputSubsystem::Impl {
         sdl = SDL::Init();
 #endif
 
-        udp = CemuhookUDP::Init();
+        udp = std::make_shared<InputCommon::CemuhookUDP::Client>();
+        udpmotion = std::make_shared<UDPMotionFactory>(udp);
+        Input::RegisterFactory<Input::MotionDevice>("cemuhookudp", udpmotion);
+        udptouch = std::make_shared<UDPTouchFactory>(udp);
+        Input::RegisterFactory<Input::TouchDevice>("cemuhookudp", udptouch);
     }
 
     void Shutdown() {
@@ -53,12 +58,17 @@ struct InputSubsystem::Impl {
 #ifdef HAVE_SDL2
         sdl.reset();
 #endif
-        udp.reset();
         Input::UnregisterFactory<Input::ButtonDevice>("gcpad");
         Input::UnregisterFactory<Input::AnalogDevice>("gcpad");
 
         gcbuttons.reset();
         gcanalog.reset();
+
+        Input::UnregisterFactory<Input::MotionDevice>("cemuhookudp");
+        Input::UnregisterFactory<Input::TouchDevice>("cemuhookudp");
+
+        udpmotion.reset();
+        udptouch.reset();
     }
 
     [[nodiscard]] std::vector<Common::ParamPackage> GetInputDevices() const {
@@ -72,6 +82,8 @@ struct InputSubsystem::Impl {
 #endif
         auto udp_devices = udp->GetInputDevices();
         devices.insert(devices.end(), udp_devices.begin(), udp_devices.end());
+        auto gcpad_devices = gcadapter->GetInputDevices();
+        devices.insert(devices.end(), gcpad_devices.begin(), gcpad_devices.end());
         return devices;
     }
 
@@ -83,6 +95,9 @@ struct InputSubsystem::Impl {
         if (params.Get("class", "") == "key") {
             // TODO consider returning the SDL key codes for the default keybindings
             return {};
+        }
+        if (params.Get("class", "") == "gcpad") {
+            return gcadapter->GetAnalogMappingForDevice(params);
         }
 #ifdef HAVE_SDL2
         if (params.Get("class", "") == "sdl") {
@@ -101,6 +116,9 @@ struct InputSubsystem::Impl {
             // TODO consider returning the SDL key codes for the default keybindings
             return {};
         }
+        if (params.Get("class", "") == "gcpad") {
+            return gcadapter->GetButtonMappingForDevice(params);
+        }
 #ifdef HAVE_SDL2
         if (params.Get("class", "") == "sdl") {
             return sdl->GetButtonMappingForDevice(params);
@@ -109,14 +127,29 @@ struct InputSubsystem::Impl {
         return {};
     }
 
+    [[nodiscard]] MotionMapping GetMotionMappingForDevice(
+        const Common::ParamPackage& params) const {
+        if (!params.Has("class") || params.Get("class", "") == "any") {
+            return {};
+        }
+        if (params.Get("class", "") == "cemuhookudp") {
+            // TODO return the correct motion device
+            return {};
+        }
+        return {};
+    }
+
     std::shared_ptr<Keyboard> keyboard;
     std::shared_ptr<MotionEmu> motion_emu;
 #ifdef HAVE_SDL2
     std::unique_ptr<SDL::State> sdl;
 #endif
-    std::unique_ptr<CemuhookUDP::State> udp;
     std::shared_ptr<GCButtonFactory> gcbuttons;
     std::shared_ptr<GCAnalogFactory> gcanalog;
+    std::shared_ptr<UDPMotionFactory> udpmotion;
+    std::shared_ptr<UDPTouchFactory> udptouch;
+    std::shared_ptr<CemuhookUDP::Client> udp;
+    std::shared_ptr<GCAdapter::Adapter> gcadapter;
 };
 
 InputSubsystem::InputSubsystem() : impl{std::make_unique<Impl>()} {}
@@ -173,6 +206,22 @@ GCButtonFactory* InputSubsystem::GetGCButtons() {
 
 const GCButtonFactory* InputSubsystem::GetGCButtons() const {
     return impl->gcbuttons.get();
+}
+
+UDPMotionFactory* InputSubsystem::GetUDPMotions() {
+    return impl->udpmotion.get();
+}
+
+const UDPMotionFactory* InputSubsystem::GetUDPMotions() const {
+    return impl->udpmotion.get();
+}
+
+UDPTouchFactory* InputSubsystem::GetUDPTouch() {
+    return impl->udptouch.get();
+}
+
+const UDPTouchFactory* InputSubsystem::GetUDPTouch() const {
+    return impl->udptouch.get();
 }
 
 void InputSubsystem::ReloadInputDevices() {
